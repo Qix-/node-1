@@ -248,14 +248,83 @@ b.copy(new Buffer(1), 1, 1, 1);
 // try to copy 0 bytes from past the end of the source buffer
 b.copy(new Buffer(1), 0, 2048, 2048);
 
-// try to toString() a 0-length slice of a buffer, both within and without the
-// valid buffer range
-assert.equal(new Buffer('abc').toString('ascii', 0, 0), '');
-assert.equal(new Buffer('abc').toString('ascii', -100, -100), '');
-assert.equal(new Buffer('abc').toString('ascii', 100, 100), '');
+const rangeBuffer = new Buffer('abc');
+
+// if start >= buffer's length, empty string will be returned
+assert.equal(rangeBuffer.toString('ascii', 3), '');
+assert.equal(rangeBuffer.toString('ascii', +Infinity), '');
+assert.equal(rangeBuffer.toString('ascii', 3.14, 3), '');
+assert.equal(rangeBuffer.toString('ascii', 'Infinity', 3), '');
+
+// if end <= 0, empty string will be returned
+assert.equal(rangeBuffer.toString('ascii', 1, 0), '');
+assert.equal(rangeBuffer.toString('ascii', 1, -1.2), '');
+assert.equal(rangeBuffer.toString('ascii', 1, -100), '');
+assert.equal(rangeBuffer.toString('ascii', 1, -Infinity), '');
+
+// if start < 0, start will be taken as zero
+assert.equal(rangeBuffer.toString('ascii', -1, 3), 'abc');
+assert.equal(rangeBuffer.toString('ascii', -1.99, 3), 'abc');
+assert.equal(rangeBuffer.toString('ascii', -Infinity, 3), 'abc');
+assert.equal(rangeBuffer.toString('ascii', '-1', 3), 'abc');
+assert.equal(rangeBuffer.toString('ascii', '-1.99', 3), 'abc');
+assert.equal(rangeBuffer.toString('ascii', '-Infinity', 3), 'abc');
+
+// if start is an invalid integer, start will be taken as zero
+assert.equal(rangeBuffer.toString('ascii', 'node.js', 3), 'abc');
+assert.equal(rangeBuffer.toString('ascii', {}, 3), 'abc');
+assert.equal(rangeBuffer.toString('ascii', [], 3), 'abc');
+assert.equal(rangeBuffer.toString('ascii', NaN, 3), 'abc');
+assert.equal(rangeBuffer.toString('ascii', null, 3), 'abc');
+assert.equal(rangeBuffer.toString('ascii', undefined, 3), 'abc');
+assert.equal(rangeBuffer.toString('ascii', false, 3), 'abc');
+assert.equal(rangeBuffer.toString('ascii', '', 3), 'abc');
+
+// but, if start is an integer when coerced, then it will be coerced and used.
+assert.equal(rangeBuffer.toString('ascii', '-1', 3), 'abc');
+assert.equal(rangeBuffer.toString('ascii', '1', 3), 'bc');
+assert.equal(rangeBuffer.toString('ascii', '-Infinity', 3), 'abc');
+assert.equal(rangeBuffer.toString('ascii', '3', 3), '');
+assert.equal(rangeBuffer.toString('ascii', Number(3), 3), '');
+assert.equal(rangeBuffer.toString('ascii', '3.14', 3), '');
+assert.equal(rangeBuffer.toString('ascii', '1.99', 3), 'bc');
+assert.equal(rangeBuffer.toString('ascii', '-1.99', 3), 'abc');
+assert.equal(rangeBuffer.toString('ascii', 1.99, 3), 'bc');
+assert.equal(rangeBuffer.toString('ascii', true, 3), 'bc');
+
+// if end > buffer's length, end will be taken as buffer's length
+assert.equal(rangeBuffer.toString('ascii', 0, 5), 'abc');
+assert.equal(rangeBuffer.toString('ascii', 0, 6.99), 'abc');
+assert.equal(rangeBuffer.toString('ascii', 0, Infinity), 'abc');
+assert.equal(rangeBuffer.toString('ascii', 0, '5'), 'abc');
+assert.equal(rangeBuffer.toString('ascii', 0, '6.99'), 'abc');
+assert.equal(rangeBuffer.toString('ascii', 0, 'Infinity'), 'abc');
+
+// if end is an invalid integer, end will be taken as buffer's length
+assert.equal(rangeBuffer.toString('ascii', 0, 'node.js'), '');
+assert.equal(rangeBuffer.toString('ascii', 0, {}), '');
+assert.equal(rangeBuffer.toString('ascii', 0, NaN), '');
+assert.equal(rangeBuffer.toString('ascii', 0, undefined), 'abc');
+assert.equal(rangeBuffer.toString('ascii', 0), 'abc');
+assert.equal(rangeBuffer.toString('ascii', 0, null), '');
+assert.equal(rangeBuffer.toString('ascii', 0, []), '');
+assert.equal(rangeBuffer.toString('ascii', 0, false), '');
+assert.equal(rangeBuffer.toString('ascii', 0, ''), '');
+
+// but, if end is an integer when coerced, then it will be coerced and used.
+assert.equal(rangeBuffer.toString('ascii', 0, '-1'), '');
+assert.equal(rangeBuffer.toString('ascii', 0, '1'), 'a');
+assert.equal(rangeBuffer.toString('ascii', 0, '-Infinity'), '');
+assert.equal(rangeBuffer.toString('ascii', 0, '3'), 'abc');
+assert.equal(rangeBuffer.toString('ascii', 0, Number(3)), 'abc');
+assert.equal(rangeBuffer.toString('ascii', 0, '3.14'), 'abc');
+assert.equal(rangeBuffer.toString('ascii', 0, '1.99'), 'a');
+assert.equal(rangeBuffer.toString('ascii', 0, '-1.99'), '');
+assert.equal(rangeBuffer.toString('ascii', 0, 1.99), 'a');
+assert.equal(rangeBuffer.toString('ascii', 0, true), 'a');
 
 // try toString() with a object as a encoding
-assert.equal(new Buffer('abc').toString({toString: function() {
+assert.equal(rangeBuffer.toString({toString: function() {
   return 'ascii';
 }}), 'abc');
 
@@ -549,6 +618,9 @@ for (var i = 0; i < segments.length; ++i) {
   pos += b.write(segments[i], pos, 'base64');
 }
 assert.equal(b.toString('binary', 0, pos), 'Madness?! This is node.js!');
+
+// Regression test for https://github.com/nodejs/node/issues/3496.
+assert.equal(Buffer('=bad'.repeat(1e4), 'base64').length, 0);
 
 // Creating buffers larger than pool size.
 var l = Buffer.poolSize + 5;
@@ -849,8 +921,8 @@ Buffer(Buffer(0), 0, 0);
 
 // GH-5110
 (function() {
-  var buffer = new Buffer('test'),
-      string = JSON.stringify(buffer);
+  const buffer = new Buffer('test');
+  const string = JSON.stringify(buffer);
 
   assert.equal(string, '{"type":"Buffer","data":[116,101,115,116]}');
 
@@ -1024,6 +1096,26 @@ assert.equal(buf.readInt8(0), -1);
   assert.deepEqual(buf.toJSON().data, [0xed, 0xcb, 0xaa]);
   assert.equal(buf.readIntBE(0, 3), -0x123456);
 
+  buf = new Buffer(3);
+  buf.writeIntLE(-0x123400, 0, 3);
+  assert.deepEqual(buf.toJSON().data, [0x00, 0xcc, 0xed]);
+  assert.equal(buf.readIntLE(0, 3), -0x123400);
+
+  buf = new Buffer(3);
+  buf.writeIntBE(-0x123400, 0, 3);
+  assert.deepEqual(buf.toJSON().data, [0xed, 0xcc, 0x00]);
+  assert.equal(buf.readIntBE(0, 3), -0x123400);
+
+  buf = new Buffer(3);
+  buf.writeIntLE(-0x120000, 0, 3);
+  assert.deepEqual(buf.toJSON().data, [0x00, 0x00, 0xee]);
+  assert.equal(buf.readIntLE(0, 3), -0x120000);
+
+  buf = new Buffer(3);
+  buf.writeIntBE(-0x120000, 0, 3);
+  assert.deepEqual(buf.toJSON().data, [0xee, 0x00, 0x00]);
+  assert.equal(buf.readIntBE(0, 3), -0x120000);
+
   buf = new Buffer(5);
   buf.writeUIntLE(0x1234567890, 0, 5);
   assert.deepEqual(buf.toJSON().data, [0x90, 0x78, 0x56, 0x34, 0x12]);
@@ -1053,6 +1145,16 @@ assert.equal(buf.readInt8(0), -1);
   buf.writeIntBE(-0x1234567890, 0, 5);
   assert.deepEqual(buf.toJSON().data, [0xed, 0xcb, 0xa9, 0x87, 0x70]);
   assert.equal(buf.readIntBE(0, 5), -0x1234567890);
+
+  buf = new Buffer(5);
+  buf.writeIntLE(-0x0012000000, 0, 5);
+  assert.deepEqual(buf.toJSON().data, [0x00, 0x00, 0x00, 0xee, 0xff]);
+  assert.equal(buf.readIntLE(0, 5), -0x0012000000);
+
+  buf = new Buffer(5);
+  buf.writeIntBE(-0x0012000000, 0, 5);
+  assert.deepEqual(buf.toJSON().data, [0xff, 0xee, 0x00, 0x00, 0x00]);
+  assert.equal(buf.readIntBE(0, 5), -0x0012000000);
 })();
 
 // test Buffer slice
@@ -1061,14 +1163,46 @@ assert.equal(buf.readInt8(0), -1);
   assert.equal(buf.slice(-10, 10), '0123456789');
   assert.equal(buf.slice(-20, 10), '0123456789');
   assert.equal(buf.slice(-20, -10), '');
+  assert.equal(buf.slice(), '0123456789');
+  assert.equal(buf.slice(0), '0123456789');
+  assert.equal(buf.slice(0, 0), '');
+  assert.equal(buf.slice(undefined), '0123456789');
+  assert.equal(buf.slice('foobar'), '0123456789');
+  assert.equal(buf.slice(undefined, undefined), '0123456789');
+
+  assert.equal(buf.slice(2), '23456789');
+  assert.equal(buf.slice(5), '56789');
+  assert.equal(buf.slice(10), '');
+  assert.equal(buf.slice(5, 8), '567');
+  assert.equal(buf.slice(8, -1), '8');
+  assert.equal(buf.slice(-10), '0123456789');
+  assert.equal(buf.slice(0, -9), '0');
+  assert.equal(buf.slice(0, -10), '');
   assert.equal(buf.slice(0, -1), '012345678');
   assert.equal(buf.slice(2, -2), '234567');
   assert.equal(buf.slice(0, 65536), '0123456789');
   assert.equal(buf.slice(65536, 0), '');
+  assert.equal(buf.slice(-5, -8), '');
+  assert.equal(buf.slice(-5, -3), '56');
+  assert.equal(buf.slice(-10, 10), '0123456789');
   for (var i = 0, s = buf.toString(); i < buf.length; ++i) {
+    assert.equal(buf.slice(i), s.slice(i));
+    assert.equal(buf.slice(0, i), s.slice(0, i));
     assert.equal(buf.slice(-i), s.slice(-i));
     assert.equal(buf.slice(0, -i), s.slice(0, -i));
   }
+
+  var utf16Buf = new Buffer('0123456789', 'utf16le');
+  assert.deepEqual(utf16Buf.slice(0, 6), Buffer('012', 'utf16le'));
+
+  assert.equal(buf.slice('0', '1'), '0');
+  assert.equal(buf.slice('-5', '10'), '56789');
+  assert.equal(buf.slice('-10', '10'), '0123456789');
+  assert.equal(buf.slice('-10', '-5'), '01234');
+  assert.equal(buf.slice('-10', '-0'), '');
+  assert.equal(buf.slice('111'), '');
+  assert.equal(buf.slice('0', '-111'), '');
+
   // try to slice a zero length Buffer
   // see https://github.com/joyent/node/issues/5881
   SlowBuffer(0).slice(0, 1);
@@ -1137,6 +1271,9 @@ assert.equal(Buffer.compare(d, b), 1);
 assert.equal(Buffer.compare(b, d), -1);
 assert.equal(Buffer.compare(c, c), 0);
 
+assert.equal(Buffer.compare(Buffer(0), Buffer(0)), 0);
+assert.equal(Buffer.compare(Buffer(0), Buffer(1)), -1);
+assert.equal(Buffer.compare(Buffer(1), Buffer(0)), 1);
 
 assert.throws(function() {
   var b = new Buffer(1);
@@ -1184,8 +1321,15 @@ assert.throws(function() {
 
 assert.throws(function() {
   new Buffer();
-}, /must start with number, buffer, array or string/);
+}, /Must start with number, buffer, array or string/);
 
 assert.throws(function() {
   new Buffer(null);
-}, /must start with number, buffer, array or string/);
+}, /Must start with number, buffer, array or string/);
+
+
+// Test prototype getters don't throw
+assert.equal(Buffer.prototype.parent, undefined);
+assert.equal(Buffer.prototype.offset, undefined);
+assert.equal(SlowBuffer.prototype.parent, undefined);
+assert.equal(SlowBuffer.prototype.offset, undefined);

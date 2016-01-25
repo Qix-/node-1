@@ -1,17 +1,16 @@
 'use strict';
-var common = require('../common');
-var assert = require('assert'),
-    dns = require('dns'),
-    net = require('net'),
-    isIP = net.isIP,
-    isIPv4 = net.isIPv4,
-    isIPv6 = net.isIPv6;
-var util = require('util');
+require('../common');
+const assert = require('assert');
+const dns = require('dns');
+const net = require('net');
+const isIPv4 = net.isIPv4;
+const isIPv6 = net.isIPv6;
+const util = require('util');
 
-var expected = 0,
-    completed = 0,
-    running = false,
-    queue = [];
+let expected = 0;
+let completed = 0;
+let running = false;
+const queue = [];
 
 
 function TEST(f) {
@@ -43,81 +42,12 @@ function checkWrap(req) {
   assert.ok(typeof req === 'object');
 }
 
-TEST(function test_resolve4(done) {
-  var req = dns.resolve4('www.google.com', function(err, ips) {
-    if (err) throw err;
-
-    assert.ok(ips.length > 0);
-
-    for (var i = 0; i < ips.length; i++) {
-      assert.ok(isIPv4(ips[i]));
-    }
-
-    done();
-  });
-
-  checkWrap(req);
-});
-
-
-TEST(function test_resolve6(done) {
-  var req = dns.resolve6('ipv6.google.com', function(err, ips) {
-    if (err) throw err;
-
-    assert.ok(ips.length > 0);
-
-    for (var i = 0; i < ips.length; i++) {
-      assert.ok(isIPv6(ips[i]));
-    }
-
-    done();
-  });
-
-  checkWrap(req);
-});
-
-
-TEST(function test_reverse_ipv4(done) {
-  var req = dns.reverse('8.8.8.8', function(err, domains) {
-    if (err) throw err;
-
-    assert.ok(domains.length > 0);
-
-    for (var i = 0; i < domains.length; i++) {
-      assert.ok(domains[i]);
-      assert.ok(typeof domains[i] === 'string');
-    }
-
-    done();
-  });
-
-  checkWrap(req);
-});
-
-
-TEST(function test_reverse_ipv6(done) {
-  var req = dns.reverse('2001:4860:4860::8888', function(err, domains) {
-    if (err) throw err;
-
-    assert.ok(domains.length > 0);
-
-    for (var i = 0; i < domains.length; i++) {
-      assert.ok(domains[i]);
-      assert.ok(typeof domains[i] === 'string');
-    }
-
-    done();
-  });
-
-  checkWrap(req);
-});
-
 
 TEST(function test_reverse_bogus(done) {
   var error;
 
   try {
-    var req = dns.reverse('bogus ip', function() {
+    dns.reverse('bogus ip', function() {
       assert.ok(false);
     });
   } catch (e) {
@@ -290,121 +220,6 @@ TEST(function test_resolveTxt(done) {
 });
 
 
-TEST(function test_lookup_ipv4_explicit(done) {
-  var req = dns.lookup('www.google.com', 4, function(err, ip, family) {
-    if (err) throw err;
-    assert.ok(net.isIPv4(ip));
-    assert.strictEqual(family, 4);
-
-    done();
-  });
-
-  checkWrap(req);
-});
-
-
-TEST(function test_lookup_ipv4_implicit(done) {
-  var req = dns.lookup('www.google.com', function(err, ip, family) {
-    if (err) throw err;
-    assert.ok(net.isIPv4(ip));
-    assert.strictEqual(family, 4);
-
-    done();
-  });
-
-  checkWrap(req);
-});
-
-
-TEST(function test_lookup_ipv4_explicit_object(done) {
-  var req = dns.lookup('www.google.com', {
-    family: 4
-  }, function(err, ip, family) {
-    if (err) throw err;
-    assert.ok(net.isIPv4(ip));
-    assert.strictEqual(family, 4);
-
-    done();
-  });
-
-  checkWrap(req);
-});
-
-
-TEST(function test_lookup_ipv4_hint_addrconfig(done) {
-  var req = dns.lookup('www.google.com', {
-    hints: dns.ADDRCONFIG
-  }, function(err, ip, family) {
-    if (err) throw err;
-    assert.ok(net.isIPv4(ip));
-    assert.strictEqual(family, 4);
-
-    done();
-  });
-
-  checkWrap(req);
-});
-
-
-TEST(function test_lookup_ipv6_explicit(done) {
-  var req = dns.lookup('ipv6.google.com', 6, function(err, ip, family) {
-    if (err) throw err;
-    assert.ok(net.isIPv6(ip));
-    assert.strictEqual(family, 6);
-
-    done();
-  });
-
-  checkWrap(req);
-});
-
-
-/* This ends up just being too problematic to test
-TEST(function test_lookup_ipv6_implicit(done) {
-  var req = dns.lookup('ipv6.google.com', function(err, ip, family) {
-    if (err) throw err;
-    assert.ok(net.isIPv6(ip));
-    assert.strictEqual(family, 6);
-
-    done();
-  });
-
-  checkWrap(req);
-});
-*/
-
-
-TEST(function test_lookup_ipv6_explicit_object(done) {
-  var req = dns.lookup('ipv6.google.com', {
-    family: 6
-  }, function(err, ip, family) {
-    if (err) throw err;
-    assert.ok(net.isIPv6(ip));
-    assert.strictEqual(family, 6);
-
-    done();
-  });
-
-  checkWrap(req);
-});
-
-
-TEST(function test_lookup_ipv6_hint(done) {
-  var req = dns.lookup('www.google.com', {
-    family: 6,
-    hints: dns.V4MAPPED
-  }, function(err, ip, family) {
-    if (err) throw err;
-    assert.ok(net.isIPv6(ip));
-    assert.strictEqual(family, 6);
-
-    done();
-  });
-
-  checkWrap(req);
-});
-
-
 TEST(function test_lookup_failure(done) {
   var req = dns.lookup('does.not.exist', 4, function(err, ip, family) {
     assert.ok(err instanceof Error);
@@ -424,45 +239,6 @@ TEST(function test_lookup_null(done) {
   var req = dns.lookup(null, function(err, ip, family) {
     if (err) throw err;
     assert.strictEqual(ip, null);
-    assert.strictEqual(family, 4);
-
-    done();
-  });
-
-  checkWrap(req);
-});
-
-
-TEST(function test_lookup_ip_ipv4(done) {
-  var req = dns.lookup('127.0.0.1', function(err, ip, family) {
-    if (err) throw err;
-    assert.strictEqual(ip, '127.0.0.1');
-    assert.strictEqual(family, 4);
-
-    done();
-  });
-
-  checkWrap(req);
-});
-
-
-TEST(function test_lookup_ip_ipv6(done) {
-  var req = dns.lookup('::1', function(err, ip, family) {
-    if (err) throw err;
-    assert.ok(net.isIPv6(ip));
-    assert.strictEqual(family, 6);
-
-    done();
-  });
-
-  checkWrap(req);
-});
-
-
-TEST(function test_lookup_localhost_ipv4(done) {
-  var req = dns.lookup('localhost', 4, function(err, ip, family) {
-    if (err) throw err;
-    assert.strictEqual(ip, '127.0.0.1');
     assert.strictEqual(family, 4);
 
     done();
@@ -500,44 +276,6 @@ TEST(function test_lookup_null_all(done) {
 });
 
 
-TEST(function test_lookup_all_ipv4(done) {
-  var req = dns.lookup('www.google.com', {all: true, family: 4},
-                       function(err, ips) {
-    if (err) throw err;
-    assert.ok(Array.isArray(ips));
-    assert.ok(ips.length > 0);
-
-    ips.forEach(function(ip) {
-      assert.ok(isIPv4(ip.address));
-      assert.strictEqual(ip.family, 4);
-    });
-
-    done();
-  });
-
-  checkWrap(req);
-});
-
-
-TEST(function test_lookup_all_ipv6(done) {
-  var req = dns.lookup('www.google.com', {all: true, family: 6},
-                       function(err, ips) {
-    if (err) throw err;
-    assert.ok(Array.isArray(ips));
-    assert.ok(ips.length > 0);
-
-    ips.forEach(function(ip) {
-      assert.ok(isIPv6(ip.address));
-      assert.strictEqual(ip.family, 6);
-    });
-
-    done();
-  });
-
-  checkWrap(req);
-});
-
-
 TEST(function test_lookup_all_mixed(done) {
   var req = dns.lookup('www.google.com', {all: true}, function(err, ips) {
     if (err) throw err;
@@ -552,64 +290,6 @@ TEST(function test_lookup_all_mixed(done) {
       else
         assert(false);
     });
-
-    done();
-  });
-
-  checkWrap(req);
-});
-
-
-TEST(function test_lookupservice_ip_ipv4(done) {
-  var req = dns.lookupService('127.0.0.1', 80, function(err, host, service) {
-    if (err) throw err;
-    assert.ok(common.isValidHostname(host));
-
-    /*
-     * Retrieve the actual HTTP service name as setup on the host currently
-     * running the test by reading it from /etc/services. This is not ideal,
-     * as the service name lookup could use another mechanism (e.g nscd), but
-     * it's already better than hardcoding it.
-     */
-    var httpServiceName = common.getServiceName(80, 'tcp');
-    if (!httpServiceName) {
-      /*
-       * Couldn't find service name, reverting to the most sensible default
-       * for port 80.
-       */
-      httpServiceName = 'http';
-    }
-
-    assert.strictEqual(service, httpServiceName);
-
-    done();
-  });
-
-  checkWrap(req);
-});
-
-
-TEST(function test_lookupservice_ip_ipv6(done) {
-  var req = dns.lookupService('::1', 80, function(err, host, service) {
-    if (err) throw err;
-    assert.ok(common.isValidHostname(host));
-
-    /*
-     * Retrieve the actual HTTP service name as setup on the host currently
-     * running the test by reading it from /etc/services. This is not ideal,
-     * as the service name lookup could use another mechanism (e.g nscd), but
-     * it's already better than hardcoding it.
-     */
-    var httpServiceName = common.getServiceName(80, 'tcp');
-    if (!httpServiceName) {
-      /*
-       * Couldn't find service name, reverting to the most sensible default
-       * for port 80.
-       */
-      httpServiceName = 'http';
-    }
-
-    assert.strictEqual(service, httpServiceName);
 
     done();
   });
@@ -682,27 +362,13 @@ TEST(function test_resolve_failure(done) {
 });
 
 
-/* Disabled because it appears to be not working on linux. */
-/* TEST(function test_lookup_localhost_ipv6(done) {
-  var req = dns.lookup('localhost', 6, function(err, ip, family) {
-    if (err) throw err;
-    assert.ok(net.isIPv6(ip));
-    assert.strictEqual(family, 6);
-
-    done();
-  });
-
-  checkWrap(req);
-}); */
-
-
 var getaddrinfoCallbackCalled = false;
 
 console.log('looking up nodejs.org...');
 
 var cares = process.binding('cares_wrap');
 var req = new cares.GetAddrInfoReqWrap();
-var err = cares.getaddrinfo(req, 'nodejs.org', 4);
+cares.getaddrinfo(req, 'nodejs.org', 4);
 
 req.oncomplete = function(err, domains) {
   assert.strictEqual(err, 0);

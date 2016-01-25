@@ -24,7 +24,6 @@ using v8::Exception;
 using v8::Function;
 using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
-using v8::Handle;
 using v8::Integer;
 using v8::Local;
 using v8::Null;
@@ -32,16 +31,15 @@ using v8::Object;
 using v8::String;
 using v8::Value;
 
-
 TLSWrap::TLSWrap(Environment* env,
                  Kind kind,
                  StreamBase* stream,
                  SecureContext* sc)
-    : SSLWrap<TLSWrap>(env, sc, kind),
-      StreamBase(env),
-      AsyncWrap(env,
+    : AsyncWrap(env,
                 env->tls_wrap_constructor_function()->NewInstance(),
                 AsyncWrap::PROVIDER_TLSWRAP),
+      SSLWrap<TLSWrap>(env, sc, kind),
+      StreamBase(env),
       sc_(sc),
       stream_(stream),
       enc_in_(nullptr),
@@ -153,7 +151,7 @@ void TLSWrap::InitSSL() {
     SSL_set_connect_state(ssl_);
   } else {
     // Unexpected
-    abort();
+    ABORT();
   }
 
   // Initialize ring for queud clear data
@@ -402,6 +400,8 @@ void TLSWrap::ClearOut() {
   if (ssl_ == nullptr)
     return;
 
+  crypto::MarkPopErrorOnReturn mark_pop_error_on_return;
+
   char out[kClearOutChunkSize];
   int read;
   for (;;) {
@@ -410,6 +410,7 @@ void TLSWrap::ClearOut() {
     if (read <= 0)
       break;
 
+    char* current = out;
     while (read > 0) {
       int avail = read;
 
@@ -417,10 +418,11 @@ void TLSWrap::ClearOut() {
       OnAlloc(avail, &buf);
       if (static_cast<int>(buf.len) < avail)
         avail = buf.len;
-      memcpy(buf.base, out, avail);
+      memcpy(buf.base, current, avail);
       OnRead(avail, &buf);
 
       read -= avail;
+      current += avail;
     }
   }
 
@@ -460,6 +462,8 @@ bool TLSWrap::ClearIn() {
 
   if (ssl_ == nullptr)
     return false;
+
+  crypto::MarkPopErrorOnReturn mark_pop_error_on_return;
 
   int written = 0;
   while (clear_in_->Length() > 0) {
@@ -588,6 +592,8 @@ int TLSWrap::DoWrite(WriteWrap* w,
   if (ssl_ == nullptr)
     return UV_EPROTO;
 
+  crypto::MarkPopErrorOnReturn mark_pop_error_on_return;
+
   int written = 0;
   for (i = 0; i < count; i++) {
     written = SSL_write(ssl_, bufs[i].base, bufs[i].len);
@@ -703,8 +709,11 @@ void TLSWrap::DoRead(ssize_t nread,
 
 
 int TLSWrap::DoShutdown(ShutdownWrap* req_wrap) {
+  crypto::MarkPopErrorOnReturn mark_pop_error_on_return;
+
   if (ssl_ != nullptr && SSL_shutdown(ssl_) == 0)
     SSL_shutdown(ssl_);
+
   shutdown_ = true;
   EncOut();
   return stream_->DoShutdown(req_wrap);
@@ -858,16 +867,15 @@ int TLSWrap::SelectSNIContextCallback(SSL* s, int* ad, void* arg) {
   p->sni_context_.Reset(env->isolate(), ctx);
 
   SecureContext* sc = Unwrap<SecureContext>(ctx.As<Object>());
-  InitNPN(sc);
-  SSL_set_SSL_CTX(s, sc->ctx_);
+  p->SetSNIContext(sc);
   return SSL_TLSEXT_ERR_OK;
 }
 #endif  // SSL_CTRL_SET_TLSEXT_SERVERNAME_CB
 
 
-void TLSWrap::Initialize(Handle<Object> target,
-                         Handle<Value> unused,
-                         Handle<Context> context) {
+void TLSWrap::Initialize(Local<Object> target,
+                         Local<Value> unused,
+                         Local<Context> context) {
   Environment* env = Environment::GetCurrent(context);
 
   env->SetMethod(target, "wrap", TLSWrap::Wrap);

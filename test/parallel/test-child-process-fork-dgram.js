@@ -25,7 +25,6 @@ if (common.isWindows) {
 }
 
 if (process.argv[2] === 'child') {
-  var childCollected = 0;
   var server;
 
   process.on('message', function removeMe(msg, clusterServer) {
@@ -70,7 +69,13 @@ if (process.argv[2] === 'child') {
 
   var sendMessages = function() {
     var timer = setInterval(function() {
-      client.send(msg, 0, msg.length, common.PORT, '127.0.0.1', function(err) {
+      client.send(
+        msg,
+        0,
+        msg.length,
+        common.PORT,
+        '127.0.0.1',
+        function(err) {
           if (err) throw err;
         }
       );

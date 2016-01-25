@@ -5,6 +5,8 @@ PYTHON ?= python
 DESTDIR ?=
 SIGN ?=
 PREFIX ?= /usr/local
+FLAKY_TESTS ?= run
+TEST_CI_ARGS ?=
 STAGINGSERVER ?= node-www
 
 OSTYPE := $(shell uname -s | tr '[A-Z]' '[a-z]')
@@ -65,12 +67,14 @@ uninstall:
 
 clean:
 	-rm -rf out/Makefile $(NODE_EXE) $(NODE_G_EXE) out/$(BUILDTYPE)/$(NODE_EXE)
-	@if [ -d out ]; then find out/ -name '*.o' -o -name '*.a' | xargs rm -rf; fi
+	@if [ -d out ]; then find out/ -name '*.o' -o -name '*.a' -o -name '*.d' | xargs rm -rf; fi
 	-rm -rf node_modules
+	@if [ -d deps/icu ]; then echo deleting deps/icu; rm -rf deps/icu; fi
+	-rm -f test.tap
 
 distclean:
 	-rm -rf out
-	-rm -f config.gypi icu_config.gypi
+	-rm -f config.gypi icu_config.gypi config_fips.gypi
 	-rm -f config.mk
 	-rm -rf $(NODE_EXE) $(NODE_G_EXE)
 	-rm -rf node_modules
@@ -99,19 +103,39 @@ test/gc/node_modules/weak/build/Release/weakref.node: $(NODE_EXE)
 		--directory="$(shell pwd)/test/gc/node_modules/weak" \
 		--nodedir="$(shell pwd)"
 
-build-addons: $(NODE_EXE)
-	rm -rf test/addons/doc-*/
+# Implicitly depends on $(NODE_EXE), see the build-addons rule for rationale.
+test/addons/.docbuildstamp: doc/api/addons.markdown
+	$(RM) -r test/addons/??_*/
 	$(NODE) tools/doc/addon-verify.js
-	$(foreach dir, \
-			$(sort $(dir $(wildcard test/addons/*/*.gyp))), \
-			$(NODE) deps/npm/node_modules/node-gyp/bin/node-gyp rebuild \
-					--directory="$(shell pwd)/$(dir)" \
-					--nodedir="$(shell pwd)" && ) echo "build done"
+	touch $@
+
+ADDONS_BINDING_GYPS := \
+	$(filter-out test/addons/??_*/binding.gyp, \
+		$(wildcard test/addons/*/binding.gyp))
+
+# Implicitly depends on $(NODE_EXE), see the build-addons rule for rationale.
+test/addons/.buildstamp: $(ADDONS_BINDING_GYPS) | test/addons/.docbuildstamp
+	# Cannot use $(wildcard test/addons/*/) here, it's evaluated before
+	# embedded addons have been generated from the documentation.
+	for dirname in test/addons/*/; do \
+		$(NODE) deps/npm/node_modules/node-gyp/bin/node-gyp rebuild \
+			--directory="$$PWD/$$dirname" \
+			--nodedir="$$PWD"; \
+	done
+	touch $@
+
+# .buildstamp and .docbuildstamp need $(NODE_EXE) but cannot depend on it
+# directly because it calls make recursively.  The parent make cannot know
+# if the subprocess touched anything so it pessimistically assumes that
+# .buildstamp and .docbuildstamp are out of date and need a rebuild.
+# Just goes to show that recursive make really is harmful...
+# TODO(bnoordhuis) Force rebuild after gyp or node-gyp update.
+build-addons: $(NODE_EXE) test/addons/.buildstamp
 
 test-gc: all test/gc/node_modules/weak/build/Release/weakref.node
 	$(PYTHON) tools/test.py --mode=release gc
 
-test-build: all build-addons
+test-build: | all build-addons
 
 test-all: test-build test/gc/node_modules/weak/build/Release/weakref.node
 	$(PYTHON) tools/test.py --mode=debug,release
@@ -119,8 +143,9 @@ test-all: test-build test/gc/node_modules/weak/build/Release/weakref.node
 test-all-valgrind: test-build
 	$(PYTHON) tools/test.py --mode=debug,release --valgrind
 
-test-ci:
-	$(PYTHON) tools/test.py -p tap --logfile test.tap --mode=release message parallel sequential
+test-ci: | build-addons
+	$(PYTHON) tools/test.py -p tap --logfile test.tap --mode=release --flaky-tests=$(FLAKY_TESTS) \
+		$(TEST_CI_ARGS) addons message parallel sequential
 
 test-release: test-build
 	$(PYTHON) tools/test.py --mode=release
@@ -269,7 +294,12 @@ endif
 
 TARNAME=node-$(FULLVERSION)
 TARBALL=$(TARNAME).tar
+# Custom user-specified variation, use it directly
+ifdef VARIATION
+BINARYNAME=$(TARNAME)-$(PLATFORM)-$(ARCH)-$(VARIATION)
+else
 BINARYNAME=$(TARNAME)-$(PLATFORM)-$(ARCH)
+endif
 BINARYTAR=$(BINARYNAME).tar
 # OSX doesn't have xz installed by default, http://macpkg.sourceforge.net/
 XZ=$(shell which xz > /dev/null 2>&1; echo $$?)
@@ -315,7 +345,7 @@ $(PKG): release-only
 		| sed -E "s/\\{npmversion\\}/$(NPMVERSION)/g" \
 		> tools/osx-pkg.pmdoc/index.xml
 	$(PACKAGEMAKER) \
-		--id "org.node.pkg" \
+		--id "org.nodejs.pkg" \
 		--doc tools/osx-pkg.pmdoc \
 		--out $(PKG)
 	SIGN="$(PRODUCTSIGN_CERT)" PKG="$(PKG)" bash tools/osx-productsign.sh
@@ -323,9 +353,10 @@ $(PKG): release-only
 pkg: $(PKG)
 
 pkg-upload: pkg
-	ssh $(STAGINGSERVER) "mkdir -p staging/$(DISTTYPEDIR)/$(FULLVERSION)"
-	scp -p node-$(FULLVERSION).pkg $(STAGINGSERVER):staging/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION).pkg
-	ssh $(STAGINGSERVER) "touch staging/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION).pkg.done"
+	ssh $(STAGINGSERVER) "mkdir -p nodejs/$(DISTTYPEDIR)/$(FULLVERSION)"
+	chmod 664 node-$(FULLVERSION).pkg
+	scp -p node-$(FULLVERSION).pkg $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION).pkg
+	ssh $(STAGINGSERVER) "touch nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION).pkg.done"
 
 $(TARBALL): release-only $(NODE_EXE) doc
 	git checkout-index -a -f --prefix=$(TARNAME)/
@@ -349,18 +380,21 @@ endif
 tar: $(TARBALL)
 
 tar-upload: tar
-	ssh $(STAGINGSERVER) "mkdir -p staging/$(DISTTYPEDIR)/$(FULLVERSION)"
-	scp -p node-$(FULLVERSION).tar.gz $(STAGINGSERVER):staging/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION).tar.gz
-	ssh $(STAGINGSERVER) "touch staging/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION).tar.gz.done"
+	ssh $(STAGINGSERVER) "mkdir -p nodejs/$(DISTTYPEDIR)/$(FULLVERSION)"
+	chmod 664 node-$(FULLVERSION).tar.gz
+	scp -p node-$(FULLVERSION).tar.gz $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION).tar.gz
+	ssh $(STAGINGSERVER) "touch nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION).tar.gz.done"
 ifeq ($(XZ), 0)
-	scp -p node-$(FULLVERSION).tar.xz $(STAGINGSERVER):staging/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION).tar.xz
-	ssh $(STAGINGSERVER) "touch staging/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION).tar.xz.done"
+	chmod 664 node-$(FULLVERSION).tar.xz
+	scp -p node-$(FULLVERSION).tar.xz $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION).tar.xz
+	ssh $(STAGINGSERVER) "touch nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION).tar.xz.done"
 endif
 
 doc-upload: tar
-	ssh $(STAGINGSERVER) "mkdir -p staging/$(DISTTYPEDIR)/$(FULLVERSION)"
-	scp -r out/doc/ $(STAGINGSERVER):staging/$(DISTTYPEDIR)/$(FULLVERSION)/
-	ssh $(STAGINGSERVER) "touch staging/$(DISTTYPEDIR)/$(FULLVERSION)/doc.done"
+	ssh $(STAGINGSERVER) "mkdir -p nodejs/$(DISTTYPEDIR)/$(FULLVERSION)"
+	chmod -R ug=rw-x+X,o=r+X out/doc/
+	scp -pr out/doc/ $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/docs/
+	ssh $(STAGINGSERVER) "touch nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/docs.done"
 
 $(TARBALL)-headers: config.gypi release-only
 	$(PYTHON) ./configure \
@@ -382,12 +416,14 @@ endif
 tar-headers: $(TARBALL)-headers
 
 tar-headers-upload: tar-headers
-	ssh $(STAGINGSERVER) "mkdir -p staging/$(DISTTYPEDIR)/$(FULLVERSION)"
-	scp -p $(TARNAME)-headers.tar.gz $(STAGINGSERVER):staging/$(DISTTYPEDIR)/$(FULLVERSION)/$(TARNAME)-headers.tar.gz
-	ssh $(STAGINGSERVER) "touch staging/$(DISTTYPEDIR)/$(FULLVERSION)/$(TARNAME)-headers.tar.gz.done"
+	ssh $(STAGINGSERVER) "mkdir -p nodejs/$(DISTTYPEDIR)/$(FULLVERSION)"
+	chmod 664 $(TARNAME)-headers.tar.gz
+	scp -p $(TARNAME)-headers.tar.gz $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/$(TARNAME)-headers.tar.gz
+	ssh $(STAGINGSERVER) "touch nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/$(TARNAME)-headers.tar.gz.done"
 ifeq ($(XZ), 0)
-	scp -p $(TARNAME)-headers.tar.xz $(STAGINGSERVER):staging/$(DISTTYPEDIR)/$(FULLVERSION)/$(TARNAME)-headers.tar.xz
-	ssh $(STAGINGSERVER) "touch staging/$(DISTTYPEDIR)/$(FULLVERSION)/$(TARNAME)-headers.tar.xz.done"
+	chmod 664 $(TARNAME)-headers.tar.xz
+	scp -p $(TARNAME)-headers.tar.xz $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/$(TARNAME)-headers.tar.xz
+	ssh $(STAGINGSERVER) "touch nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/$(TARNAME)-headers.tar.xz.done"
 endif
 
 $(BINARYTAR): release-only
@@ -414,12 +450,14 @@ endif
 binary: $(BINARYTAR)
 
 binary-upload: binary
-	ssh $(STAGINGSERVER) "mkdir -p staging/$(DISTTYPEDIR)/$(FULLVERSION)"
-	scp -p node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.gz $(STAGINGSERVER):staging/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.gz
-	ssh $(STAGINGSERVER) "touch staging/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.gz.done"
+	ssh $(STAGINGSERVER) "mkdir -p nodejs/$(DISTTYPEDIR)/$(FULLVERSION)"
+	chmod 664 node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.gz
+	scp -p node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.gz $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.gz
+	ssh $(STAGINGSERVER) "touch nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.gz.done"
 ifeq ($(XZ), 0)
-	scp -p node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.xz $(STAGINGSERVER):staging/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.xz
-	ssh $(STAGINGSERVER) "touch staging/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.xz.done"
+	chmod 664 node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.xz
+	scp -p node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.xz $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.xz
+	ssh $(STAGINGSERVER) "touch nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.xz.done"
 endif
 
 haswrk=$(shell which wrk > /dev/null 2>&1; echo $$?)
@@ -460,6 +498,9 @@ bench-url: all
 bench-events: all
 	@$(NODE) benchmark/common.js events
 
+bench-util: all
+	@$(NODE) benchmark/common.js util
+
 bench-all: bench bench-misc bench-array bench-buffer bench-url bench-events
 
 bench: bench-net bench-http bench-fs bench-tls
@@ -473,7 +514,8 @@ bench-idle:
 	$(NODE) benchmark/idle_clients.js &
 
 jslint:
-	$(NODE) tools/eslint/bin/eslint.js src lib test --rulesdir tools/eslint-rules --reset --quiet
+	$(NODE) tools/eslint/bin/eslint.js src lib test tools/eslint-rules \
+		--rulesdir tools/eslint-rules --quiet
 
 CPPLINT_EXCLUDE ?=
 CPPLINT_EXCLUDE += src/node_lttng.cc
@@ -483,7 +525,7 @@ CPPLINT_EXCLUDE += src/node_win32_perfctr_provider.cc
 CPPLINT_EXCLUDE += src/queue.h
 CPPLINT_EXCLUDE += src/tree.h
 CPPLINT_EXCLUDE += src/v8abbr.h
-CPPLINT_EXCLUDE += $(wildcard test/addons/doc-*/*.cc test/addons/doc-*/*.h)
+CPPLINT_EXCLUDE += $(wildcard test/addons/??_*/*.cc test/addons/??_*/*.h)
 
 CPPLINT_FILES = $(filter-out $(CPPLINT_EXCLUDE), $(wildcard \
 	deps/debugger-agent/include/* \
